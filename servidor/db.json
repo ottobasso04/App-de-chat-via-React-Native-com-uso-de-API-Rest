@@ -1,0 +1,144 @@
+{
+  "usuarios": [
+    {
+      "id": 1,
+      "nome": "Ana",
+      "cor": "#25D366",
+      "criadoEm": "2026-08-27T19:38:31.586Z"
+    },
+    {
+      "id": 2,
+      "nome": "Bruno",
+      "cor": "#128C7E",
+      "criadoEm": "2026-08-27T19:38:31.586Z"
+    },
+    {
+      "id": 3,
+      "nome": "Carla",
+      "cor": "#34B7F1",
+      "criadoEm": "2026-08-27T19:38:31.586Z"
+    },
+    {
+      "id": 4,
+      "nome": "Hugo Bugo",
+      "cor": "#7E57C2",
+      "criadoEm": "2026-08-27T20:20:39.927Z"
+    }
+  ],
+  "conversas": [
+    {
+      "id": 1,
+      "titulo": null,
+      "participantes": [
+        1,
+        2
+      ],
+      "criadaEm": "2026-08-27T19:38:31.586Z"
+    },
+    {
+      "id": 2,
+      "titulo": "Trabalho de SI",
+      "participantes": [
+        1,
+        2,
+        3
+      ],
+      "criadaEm": "2026-08-27T19:38:31.586Z"
+    },
+    {
+      "id": 3,
+      "titulo": null,
+      "participantes": [
+        4,
+        2
+      ],
+      "criadaEm": "2026-08-27T20:20:49.702Z"
+    },
+    {
+      "id": 4,
+      "titulo": "fanfarrões",
+      "participantes": [
+        2,
+        3,
+        1,
+        4
+      ],
+      "criadaEm": "2026-08-27T20:21:23.381Z"
+    }
+  ],
+  "mensagens": [
+    {
+      "id": 1,
+      "conversaId": 1,
+      "autorId": 2,
+      "texto": "Oi Ana! Tudo bem?",
+      "criadaEm": "2026-08-27T19:38:31.586Z",
+      "lidaPor": [
+        2
+      ]
+    },
+    {
+      "id": 2,
+      "conversaId": 1,
+      "autorId": 1,
+      "texto": "Tudo ótimo, e você?",
+      "criadaEm": "2026-08-27T19:38:31.586Z",
+      "lidaPor": [
+        1
+      ]
+    },
+    {
+      "id": 3,
+      "conversaId": 2,
+      "autorId": 3,
+      "texto": "Pessoal, entregamos o app na sexta.",
+      "criadaEm": "2026-08-27T19:38:31.586Z",
+      "lidaPor": [
+        3
+      ]
+    },
+    {
+      "id": 4,
+      "conversaId": 3,
+      "autorId": 4,
+      "texto": "OI BRUNOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO",
+      "criadaEm": "2026-08-27T20:20:56.161Z",
+      "lidaPor": [
+        4,
+        2
+      ]
+    },
+    {
+      "id": 5,
+      "conversaId": 3,
+      "autorId": 2,
+      "texto": "TCHAU",
+      "criadaEm": "2026-08-27T20:21:09.048Z",
+      "lidaPor": [
+        2,
+        4
+      ]
+    },
+    {
+      "id": 6,
+      "conversaId": 4,
+      "autorId": 2,
+      "texto": "ASFLASODAOS,FOPAS,DPAS,DAS",
+      "criadaEm": "2026-08-27T20:21:28.990Z",
+      "lidaPor": [
+        2,
+        4
+      ]
+    },
+    {
+      "id": 7,
+      "conversaId": 4,
+      "autorId": 4,
+      "texto": "concordo!!!!",
+      "criadaEm": "2026-08-27T20:21:38.632Z",
+      "lidaPor": [
+        4
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "ZapZap",
+    "slug": "zapzap",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "backgroundColor": "#ECE5DD",
+    "primaryColor": "#075E54",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {},
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
