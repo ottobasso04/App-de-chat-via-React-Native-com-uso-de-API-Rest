@@ -1,3 +1,5 @@
+##Feito pelos alunos Otto Basso e Leonardo Freire
+
 # ZapZap
 
 Aplicativo de mensagens instantâneas para celular e navegador, construído com **React Native (Expo)** e uma **API REST própria em Node.js**.
