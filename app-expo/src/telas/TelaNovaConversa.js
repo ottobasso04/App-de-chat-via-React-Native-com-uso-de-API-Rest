@@ -70,10 +70,7 @@ export default function TelaNovaConversa({ usuarioAtual, aoVoltar, aoCriar }) {
 
     try {
       setSalvando(true);
-      const conversa = await criarConversa(
-        [usuarioAtual.id, ...selecionados],
-        ehGrupo ? titulo.trim() : null
-      );
+      const conversa = await criarConversa(selecionados, ehGrupo ? titulo.trim() : null);
       aoCriar(conversa);
     } catch (e) {
       alertar("Erro ao criar conversa", e.message);

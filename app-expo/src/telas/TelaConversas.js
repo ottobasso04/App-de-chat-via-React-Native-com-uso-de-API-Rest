@@ -21,7 +21,13 @@ import { listarConversas } from "../api";
 const INTERVALO_ATUALIZACAO = 4000; // ms — "tempo real" simples por polling
 
 /** Lista de conversas do usuário logado (estilo WhatsApp). */
-export default function TelaConversas({ usuarioAtual, aoAbrirConversa, aoNovaConversa, aoSair }) {
+export default function TelaConversas({
+  usuarioAtual,
+  aoAbrirConversa,
+  aoNovaConversa,
+  aoAbrirPerfil,
+  aoSair,
+}) {
   const [conversas, setConversas] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [atualizando, setAtualizando] = useState(false);
@@ -37,7 +43,7 @@ export default function TelaConversas({ usuarioAtual, aoAbrirConversa, aoNovaCon
     async ({ silencioso = false } = {}) => {
       try {
         if (!silencioso) setErro(null);
-        const dados = await listarConversas(usuarioAtual.id);
+        const dados = await listarConversas();
         if (!montado.current) return;
         setConversas(Array.isArray(dados) ? dados : []);
         setErro(null);
@@ -91,15 +97,22 @@ export default function TelaConversas({ usuarioAtual, aoAbrirConversa, aoNovaCon
     <View style={styles.tela}>
       {/* Cabeçalho */}
       <View style={styles.cabecalho}>
-        <Avatar nome={usuarioAtual.nome} cor={usuarioAtual.cor} tamanho={40} />
-        <View style={styles.cabecalhoTextos}>
-          <Text style={styles.cabecalhoNome}>{usuarioAtual.nome}</Text>
-          <Text style={styles.cabecalhoSub}>
-            {totalNaoLidas > 0 ? `${totalNaoLidas} mensagem(ns) não lida(s)` : "Tudo em dia"}
-          </Text>
-        </View>
+        <TouchableOpacity
+          style={styles.perfil}
+          onPress={aoAbrirPerfil}
+          activeOpacity={0.7}
+          accessibilityLabel="Editar perfil"
+        >
+          <Avatar nome={usuarioAtual.nome} cor={usuarioAtual.cor} tamanho={40} />
+          <View style={styles.cabecalhoTextos}>
+            <Text style={styles.cabecalhoNome}>{usuarioAtual.nome}</Text>
+            <Text style={styles.cabecalhoSub}>
+              {totalNaoLidas > 0 ? `${totalNaoLidas} mensagem(ns) não lida(s)` : "Toque para editar o perfil"}
+            </Text>
+          </View>
+        </TouchableOpacity>
         <TouchableOpacity onPress={aoSair} style={styles.sair}>
-          <Text style={styles.sairTexto}>Trocar</Text>
+          <Text style={styles.sairTexto}>Sair</Text>
         </TouchableOpacity>
       </View>
 
@@ -182,6 +195,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: espaco.lg,
     paddingVertical: espaco.md,
   },
+  perfil: { flex: 1, flexDirection: "row", alignItems: "center" },
   cabecalhoTextos: { flex: 1, marginLeft: espaco.md },
   cabecalhoNome: { color: cores.branco, fontSize: 17, fontWeight: "700" },
   cabecalhoSub: { color: "#CFE9E4", fontSize: 12, marginTop: 2 },

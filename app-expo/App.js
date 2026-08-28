@@ -16,11 +16,13 @@ import TelaLogin from "./src/telas/TelaLogin";
 import TelaConversas from "./src/telas/TelaConversas";
 import TelaChat from "./src/telas/TelaChat";
 import TelaNovaConversa from "./src/telas/TelaNovaConversa";
+import TelaPerfil from "./src/telas/TelaPerfil";
+import { sair as encerrarSessao } from "./src/api";
 import { cores } from "./src/tema";
 
 export default function App() {
   const [usuarioAtual, setUsuarioAtual] = useState(null);
-  const [tela, setTela] = useState("login"); // login | conversas | chat | nova
+  const [tela, setTela] = useState("login"); // login | conversas | chat | nova | perfil | nova
   const [conversaAtiva, setConversaAtiva] = useState(null);
 
   const entrar = useCallback((usuario) => {
@@ -28,10 +30,15 @@ export default function App() {
     setTela("conversas");
   }, []);
 
-  const sair = useCallback(() => {
-    setUsuarioAtual(null);
-    setConversaAtiva(null);
-    setTela("login");
+  /** Encerra a sessão no servidor e volta para a tela de login. */
+  const sair = useCallback(async () => {
+    try {
+      await encerrarSessao();
+    } finally {
+      setUsuarioAtual(null);
+      setConversaAtiva(null);
+      setTela("login");
+    }
   }, []);
 
   const abrirConversa = useCallback((conversa) => {
@@ -44,9 +51,24 @@ export default function App() {
     setTela("conversas");
   }, []);
 
+  /** Recebe o usuário já atualizado pelo servidor (nome ou cor). */
+  const atualizarPerfil = useCallback((usuarioAtualizado) => {
+    setUsuarioAtual(usuarioAtualizado);
+  }, []);
+
   function renderizarTela() {
     if (!usuarioAtual || tela === "login") {
       return <TelaLogin aoEntrar={entrar} />;
+    }
+
+    if (tela === "perfil") {
+      return (
+        <TelaPerfil
+          usuarioAtual={usuarioAtual}
+          aoVoltar={voltarParaConversas}
+          aoSalvar={atualizarPerfil}
+        />
+      );
     }
 
     if (tela === "nova") {
@@ -74,6 +96,7 @@ export default function App() {
         usuarioAtual={usuarioAtual}
         aoAbrirConversa={abrirConversa}
         aoNovaConversa={() => setTela("nova")}
+        aoAbrirPerfil={() => setTela("perfil")}
         aoSair={sair}
       />
     );

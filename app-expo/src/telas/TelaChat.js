@@ -52,7 +52,7 @@ export default function TelaChat({ usuarioAtual, conversa, aoVoltar }) {
           (m) => m.autorId !== usuarioAtual.id && !(m.lidaPor || []).includes(usuarioAtual.id)
         );
         if (temNaoLida) {
-          await marcarConversaComoLida(conversa.id, usuarioAtual.id);
+          await marcarConversaComoLida(conversa.id);
         }
       } catch (e) {
         if (montado.current && !silencioso) setErro(e.message);
@@ -112,7 +112,7 @@ export default function TelaChat({ usuarioAtual, conversa, aoVoltar }) {
 
     try {
       setEnviando(true);
-      const nova = await enviarMensagem(conversa.id, usuarioAtual.id, limpo);
+      const nova = await enviarMensagem(conversa.id, limpo);
       setTexto("");
       setMensagens((antigas) => [...antigas, nova]);
       setErro(null);
@@ -127,7 +127,7 @@ export default function TelaChat({ usuarioAtual, conversa, aoVoltar }) {
   function handleApagar(mensagem) {
     confirmar("Apagar mensagem", `"${mensagem.texto}"`, async () => {
       try {
-        await apagarMensagem(mensagem.id, usuarioAtual.id);
+        await apagarMensagem(mensagem.id);
         setMensagens((antigas) => antigas.filter((m) => m.id !== mensagem.id));
       } catch (e) {
         alertar("Erro ao apagar", e.message);

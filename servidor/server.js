@@ -1,31 +1,81 @@
 /**
- * ZapZap — Servidor da API de chat
- * ---------------------------------
+ * ZapZap — Servidor da API de chat (com autenticação)
+ * ---------------------------------------------------
  * Servidor HTTP escrito só com módulos nativos do Node (sem npm install).
  * Guarda os dados em `db.json`, na mesma pasta deste arquivo.
  *
  * Rodar:  node server.js        (porta padrão 3333)
  *         PORT=4000 node server.js
  *
- * Endpoints
+ * Contas de exemplo criadas na primeira execução:
+ *   ana / 123456     bruno / 123456     carla / 123456
+ *
+ * Rotas públicas
  *   GET    /health
+ *   POST   /usuarios                      { usuario, senha, nome? }   cadastro
+ *   POST   /login                         { usuario, senha }
+ *
+ * Rotas protegidas (exigem cabeçalho Authorization: Bearer <token>)
+ *   POST   /logout
+ *   GET    /eu
  *   GET    /usuarios
- *   POST   /usuarios                      { nome }
- *   GET    /conversas?usuarioId=1
- *   POST   /conversas                     { participantes: [1,2], titulo? }
- *   POST   /conversas/:id/lida            { usuarioId }
- *   GET    /mensagens?conversaId=1&depoisDe=0
- *   POST   /mensagens                     { conversaId, autorId, texto }
- *   DELETE /mensagens/:id                 ?usuarioId=1
+ *   PUT    /usuarios/:id                  { nome }                    trocar o nome
+ *   GET    /conversas
+ *   POST   /conversas                     { participantes, titulo? }
+ *   POST   /conversas/:id/lida
+ *   GET    /mensagens?conversaId=1
+ *   POST   /mensagens                     { conversaId, texto }
+ *   DELETE /mensagens/:id
  */
 
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const crypto = require("crypto");
 
 const PORTA = Number(process.env.PORT) || 3333;
-const ARQUIVO_DB = path.join(__dirname, "db.json");
+
+// DB_PATH permite guardar o banco fora da pasta do projeto
+// (usado pelo Docker, que monta um volume em /dados).
+const ARQUIVO_DB = process.env.DB_PATH
+  ? path.resolve(process.env.DB_PATH)
+  : path.join(__dirname, "db.json");
+
+/* ------------------------------------------------------------------ */
+/* Senhas                                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A senha NUNCA é gravada como texto. Guardamos o resultado do scrypt
+ * (função lenta, feita para senhas) junto de um "sal" aleatório — assim
+ * duas pessoas com a mesma senha têm hashes diferentes, e quem abrir o
+ * db.json não consegue ler as senhas.
+ */
+function gerarHashSenha(senha, sal = crypto.randomBytes(16).toString("hex")) {
+  const hash = crypto.scryptSync(String(senha), sal, 64).toString("hex");
+  return { sal, hash };
+}
+
+/** Comparação em tempo constante, para não vazar informação pelo tempo de resposta. */
+function senhaConfere(senha, usuario) {
+  if (!usuario?.senhaHash || !usuario?.sal) return false;
+  const { hash } = gerarHashSenha(senha, usuario.sal);
+  const a = Buffer.from(hash, "hex");
+  const b = Buffer.from(usuario.senhaHash, "hex");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function gerarToken() {
+  return crypto.randomBytes(24).toString("hex");
+}
+
+/** Versão do usuário que pode ser enviada ao app: sem hash, sem sal. */
+function publico(usuario) {
+  if (!usuario) return null;
+  const { senhaHash, sal, ...resto } = usuario;
+  return resto;
+}
 
 /* ------------------------------------------------------------------ */
 /* Persistência                                                        */
@@ -39,11 +89,25 @@ function agora() {
 
 function bancoInicial() {
   const criadaEm = agora();
+
+  const criar = (id, usuario, nome, senha) => {
+    const { sal, hash } = gerarHashSenha(senha);
+    return {
+      id,
+      usuario, // login (único, sem espaços)
+      nome, // nome exibido (pode ser trocado)
+      cor: CORES[(id - 1) % CORES.length],
+      senhaHash: hash,
+      sal,
+      criadoEm: criadaEm,
+    };
+  };
+
   return {
     usuarios: [
-      { id: 1, nome: "Ana", cor: CORES[0], criadoEm: criadaEm },
-      { id: 2, nome: "Bruno", cor: CORES[1], criadoEm: criadaEm },
-      { id: 3, nome: "Carla", cor: CORES[2], criadoEm: criadaEm },
+      criar(1, "ana", "Ana", "123456"),
+      criar(2, "bruno", "Bruno", "123456"),
+      criar(3, "carla", "Carla", "123456"),
     ],
     conversas: [
       { id: 1, titulo: null, participantes: [1, 2], criadaEm },
@@ -54,6 +118,7 @@ function bancoInicial() {
       { id: 2, conversaId: 1, autorId: 1, texto: "Tudo ótimo, e você?", criadaEm, lidaPor: [1] },
       { id: 3, conversaId: 2, autorId: 3, texto: "Pessoal, entregamos o app na sexta.", criadaEm, lidaPor: [3] },
     ],
+    sessoes: [],
   };
 }
 
@@ -67,6 +132,7 @@ function carregarBanco() {
       db.usuarios = db.usuarios || [];
       db.conversas = db.conversas || [];
       db.mensagens = db.mensagens || [];
+      db.sessoes = db.sessoes || [];
     } else {
       db = bancoInicial();
       salvarBanco();
@@ -79,6 +145,8 @@ function carregarBanco() {
 }
 
 function salvarBanco() {
+  const pasta = path.dirname(ARQUIVO_DB);
+  if (!fs.existsSync(pasta)) fs.mkdirSync(pasta, { recursive: true });
   fs.writeFileSync(ARQUIVO_DB, JSON.stringify(db, null, 2), "utf8");
 }
 
@@ -96,7 +164,7 @@ function responder(res, status, corpo) {
     "Content-Type": "application/json; charset=utf-8",
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Cache-Control": "no-store",
   });
   res.end(texto);
@@ -112,7 +180,9 @@ function lerCorpo(req) {
     req.on("data", (pedaco) => {
       dados += pedaco;
       if (dados.length > 1e6) {
-        reject(new Error("Corpo da requisição grande demais"));
+        const e = new Error("Corpo da requisição grande demais.");
+        e.status = 413;
+        reject(e);
         req.destroy();
       }
     });
@@ -121,11 +191,29 @@ function lerCorpo(req) {
       try {
         resolve(JSON.parse(dados));
       } catch (e) {
-        reject(new Error("JSON inválido"));
+        const erroJson = new Error("JSON inválido no corpo da requisição.");
+        erroJson.status = 400;
+        reject(erroJson);
       }
     });
     req.on("error", reject);
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Sessões                                                             */
+/* ------------------------------------------------------------------ */
+
+/** Lê o "Authorization: Bearer <token>" e devolve o usuário dono da sessão. */
+function usuarioDaRequisicao(req) {
+  const cabecalho = req.headers.authorization || "";
+  const casa = cabecalho.match(/^Bearer\s+(.+)$/i);
+  if (!casa) return null;
+
+  const sessao = db.sessoes.find((s) => s.token === casa[1]);
+  if (!sessao) return null;
+
+  return acharUsuario(sessao.usuarioId) || null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -134,6 +222,11 @@ function lerCorpo(req) {
 
 function acharUsuario(id) {
   return db.usuarios.find((u) => u.id === Number(id));
+}
+
+function acharPorLogin(login) {
+  const alvo = String(login || "").trim().toLowerCase();
+  return db.usuarios.find((u) => u.usuario.toLowerCase() === alvo);
 }
 
 function acharConversa(id) {
@@ -167,6 +260,34 @@ function montarConversa(conversa, usuarioId) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Validações de cadastro                                              */
+/* ------------------------------------------------------------------ */
+
+function validarLogin(login) {
+  const valor = String(login || "").trim().toLowerCase();
+  if (valor.length < 3) return "O usuário precisa ter pelo menos 3 caracteres.";
+  if (valor.length > 20) return "O usuário pode ter no máximo 20 caracteres.";
+  if (!/^[a-z0-9._]+$/.test(valor)) {
+    return "O usuário pode ter apenas letras, números, ponto e underline (sem espaços).";
+  }
+  return null;
+}
+
+function validarSenha(senha) {
+  const valor = String(senha || "");
+  if (valor.length < 6) return "A senha precisa ter pelo menos 6 caracteres.";
+  if (valor.length > 64) return "A senha pode ter no máximo 64 caracteres.";
+  return null;
+}
+
+function validarNome(nome) {
+  const valor = String(nome || "").trim();
+  if (valor.length < 2) return "O nome precisa ter pelo menos 2 caracteres.";
+  if (valor.length > 30) return "O nome pode ter no máximo 30 caracteres.";
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
 /* Rotas                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -180,57 +301,148 @@ async function rotear(req, res) {
 
   if (metodo === "OPTIONS") return responder(res, 204);
 
-  /* ---------------- health ---------------- */
+  /* =================== ROTAS PÚBLICAS =================== */
+
   if (metodo === "GET" && (caminho === "/" || caminho === "/health")) {
     return responder(res, 200, {
       ok: true,
       servidor: "ZapZap API",
-      versao: "1.0.0",
+      versao: "2.0.0",
       hora: agora(),
       totais: {
         usuarios: db.usuarios.length,
         conversas: db.conversas.length,
         mensagens: db.mensagens.length,
+        sessoesAtivas: db.sessoes.length,
       },
     });
   }
 
-  /* ---------------- usuários ---------------- */
-  if (metodo === "GET" && caminho === "/usuarios") {
-    return responder(res, 200, db.usuarios);
-  }
-
+  // Cadastro
   if (metodo === "POST" && caminho === "/usuarios") {
     const corpo = await lerCorpo(req);
-    const nome = String(corpo.nome || "").trim();
 
-    if (nome.length < 2) return erro(res, 400, "O nome precisa ter pelo menos 2 caracteres.");
-    if (nome.length > 30) return erro(res, 400, "O nome pode ter no máximo 30 caracteres.");
-    if (db.usuarios.some((u) => u.nome.toLowerCase() === nome.toLowerCase())) {
-      return erro(res, 409, `Já existe um usuário chamado "${nome}".`);
+    const login = String(corpo.usuario || "").trim().toLowerCase();
+    const senha = String(corpo.senha || "");
+    const nome = String(corpo.nome || corpo.usuario || "").trim();
+
+    const problema = validarLogin(login) || validarSenha(senha) || validarNome(nome);
+    if (problema) return erro(res, 400, problema);
+
+    if (acharPorLogin(login)) {
+      return erro(res, 409, `O usuário "${login}" já está em uso. Escolha outro.`);
     }
 
     const id = proximoId(db.usuarios);
+    const { sal, hash } = gerarHashSenha(senha);
     const usuario = {
       id,
+      usuario: login,
       nome,
       cor: CORES[(id - 1) % CORES.length],
+      senhaHash: hash,
+      sal,
       criadoEm: agora(),
     };
+
     db.usuarios.push(usuario);
+
+    // Já entra logado: o cadastro devolve um token, como no login.
+    const token = gerarToken();
+    db.sessoes.push({ token, usuarioId: id, criadaEm: agora() });
     salvarBanco();
-    return responder(res, 201, usuario);
+
+    return responder(res, 201, { token, usuario: publico(usuario) });
+  }
+
+  // Login
+  if (metodo === "POST" && caminho === "/login") {
+    const corpo = await lerCorpo(req);
+    const usuario = acharPorLogin(corpo.usuario);
+
+    // Mensagem genérica de propósito: não revela se o usuário existe.
+    if (!usuario || !senhaConfere(corpo.senha, usuario)) {
+      return erro(res, 401, "Usuário ou senha inválidos.");
+    }
+
+    const token = gerarToken();
+    db.sessoes.push({ token, usuarioId: usuario.id, criadaEm: agora() });
+    salvarBanco();
+
+    return responder(res, 200, { token, usuario: publico(usuario) });
+  }
+
+  /* =================== DAQUI PARA BAIXO, SÓ COM TOKEN =================== */
+
+  const eu = usuarioDaRequisicao(req);
+  if (!eu) {
+    return erro(res, 401, "Não autenticado. Faça login para continuar.");
+  }
+
+  // Quem sou eu (útil para o app validar um token guardado)
+  if (metodo === "GET" && caminho === "/eu") {
+    return responder(res, 200, publico(eu));
+  }
+
+  // Logout: invalida o token atual
+  if (metodo === "POST" && caminho === "/logout") {
+    const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+    const antes = db.sessoes.length;
+    db.sessoes = db.sessoes.filter((s) => s.token !== token);
+    if (db.sessoes.length !== antes) salvarBanco();
+    return responder(res, 200, { ok: true });
+  }
+
+  /* ---------------- usuários ---------------- */
+
+  if (metodo === "GET" && caminho === "/usuarios") {
+    return responder(res, 200, db.usuarios.map(publico));
+  }
+
+  // Trocar o nome exibido (o login continua o mesmo)
+  const casaUsuario = caminho.match(/^\/usuarios\/(\d+)$/);
+  if (metodo === "PUT" && casaUsuario) {
+    const alvo = acharUsuario(casaUsuario[1]);
+    if (!alvo) return erro(res, 404, "Usuário não encontrado.");
+    if (alvo.id !== eu.id) return erro(res, 403, "Você só pode editar o seu próprio perfil.");
+
+    const corpo = await lerCorpo(req);
+    let mudou = false;
+
+    if (corpo.nome !== undefined) {
+      const nome = String(corpo.nome).trim();
+      const problema = validarNome(nome);
+      if (problema) return erro(res, 400, problema);
+
+      const duplicado = db.usuarios.some(
+        (u) => u.id !== alvo.id && u.nome.toLowerCase() === nome.toLowerCase()
+      );
+      if (duplicado) return erro(res, 409, `Já existe alguém usando o nome "${nome}".`);
+
+      if (nome !== alvo.nome) {
+        alvo.nome = nome;
+        mudou = true;
+      }
+    }
+
+    if (corpo.cor !== undefined && /^#[0-9a-fA-F]{6}$/.test(String(corpo.cor))) {
+      alvo.cor = String(corpo.cor);
+      mudou = true;
+    }
+
+    if (mudou) {
+      alvo.atualizadoEm = agora();
+      salvarBanco();
+    }
+    return responder(res, 200, publico(alvo));
   }
 
   /* ---------------- conversas ---------------- */
-  if (metodo === "GET" && caminho === "/conversas") {
-    const usuarioId = Number(query.get("usuarioId"));
-    if (!usuarioId) return erro(res, 400, "Informe ?usuarioId=");
-    if (!acharUsuario(usuarioId)) return erro(res, 404, "Usuário não encontrado.");
 
+  if (metodo === "GET" && caminho === "/conversas") {
     const lista = db.conversas
-      .filter((c) => c.participantes.includes(usuarioId))
-      .map((c) => montarConversa(c, usuarioId))
+      .filter((c) => c.participantes.includes(eu.id))
+      .map((c) => montarConversa(c, eu.id))
       .sort((a, b) => new Date(b.atualizadaEm) - new Date(a.atualizadaEm));
 
     return responder(res, 200, lista);
@@ -238,23 +450,23 @@ async function rotear(req, res) {
 
   if (metodo === "POST" && caminho === "/conversas") {
     const corpo = await lerCorpo(req);
-    const participantes = Array.isArray(corpo.participantes)
-      ? [...new Set(corpo.participantes.map(Number))]
-      : [];
+
+    // Quem cria sempre participa: o id vem da sessão, não do corpo.
+    const participantes = [
+      ...new Set([eu.id, ...(Array.isArray(corpo.participantes) ? corpo.participantes.map(Number) : [])]),
+    ];
     const titulo = corpo.titulo ? String(corpo.titulo).trim() : null;
 
-    if (participantes.length < 2) return erro(res, 400, "Uma conversa precisa de pelo menos 2 participantes.");
+    if (participantes.length < 2) return erro(res, 400, "Escolha pelo menos uma pessoa para conversar.");
     const inexistente = participantes.find((id) => !acharUsuario(id));
     if (inexistente) return erro(res, 404, `Usuário ${inexistente} não existe.`);
 
     // Conversa individual já existente? Reaproveita em vez de duplicar.
     if (participantes.length === 2) {
       const existente = db.conversas.find(
-        (c) =>
-          c.participantes.length === 2 &&
-          participantes.every((id) => c.participantes.includes(id))
+        (c) => c.participantes.length === 2 && participantes.every((id) => c.participantes.includes(id))
       );
-      if (existente) return responder(res, 200, montarConversa(existente, participantes[0]));
+      if (existente) return responder(res, 200, montarConversa(existente, eu.id));
     }
 
     const conversa = {
@@ -265,7 +477,7 @@ async function rotear(req, res) {
     };
     db.conversas.push(conversa);
     salvarBanco();
-    return responder(res, 201, montarConversa(conversa, participantes[0]));
+    return responder(res, 201, montarConversa(conversa, eu.id));
   }
 
   // POST /conversas/:id/lida
@@ -273,17 +485,16 @@ async function rotear(req, res) {
   if (metodo === "POST" && casaLida) {
     const conversa = acharConversa(casaLida[1]);
     if (!conversa) return erro(res, 404, "Conversa não encontrada.");
-
-    const corpo = await lerCorpo(req);
-    const usuarioId = Number(corpo.usuarioId);
-    if (!acharUsuario(usuarioId)) return erro(res, 404, "Usuário não encontrado.");
+    if (!conversa.participantes.includes(eu.id)) {
+      return erro(res, 403, "Você não participa desta conversa.");
+    }
 
     let alteradas = 0;
     db.mensagens.forEach((m) => {
       if (m.conversaId === conversa.id) {
         m.lidaPor = m.lidaPor || [];
-        if (!m.lidaPor.includes(usuarioId)) {
-          m.lidaPor.push(usuarioId);
+        if (!m.lidaPor.includes(eu.id)) {
+          m.lidaPor.push(eu.id);
           alteradas++;
         }
       }
@@ -293,15 +504,21 @@ async function rotear(req, res) {
   }
 
   /* ---------------- mensagens ---------------- */
+
   if (metodo === "GET" && caminho === "/mensagens") {
     const conversaId = Number(query.get("conversaId"));
     const depoisDe = Number(query.get("depoisDe")) || 0;
     if (!conversaId) return erro(res, 400, "Informe ?conversaId=");
-    if (!acharConversa(conversaId)) return erro(res, 404, "Conversa não encontrada.");
+
+    const conversa = acharConversa(conversaId);
+    if (!conversa) return erro(res, 404, "Conversa não encontrada.");
+    if (!conversa.participantes.includes(eu.id)) {
+      return erro(res, 403, "Você não participa desta conversa.");
+    }
 
     const lista = mensagensDaConversa(conversaId)
       .filter((m) => m.id > depoisDe)
-      .map((m) => ({ ...m, autor: acharUsuario(m.autorId) || null }));
+      .map((m) => ({ ...m, autor: publico(acharUsuario(m.autorId)) }));
 
     return responder(res, 200, lista);
   }
@@ -309,14 +526,12 @@ async function rotear(req, res) {
   if (metodo === "POST" && caminho === "/mensagens") {
     const corpo = await lerCorpo(req);
     const conversaId = Number(corpo.conversaId);
-    const autorId = Number(corpo.autorId);
     const texto = String(corpo.texto || "").trim();
 
     const conversa = acharConversa(conversaId);
     if (!conversa) return erro(res, 404, "Conversa não encontrada.");
-    if (!acharUsuario(autorId)) return erro(res, 404, "Autor não encontrado.");
-    if (!conversa.participantes.includes(autorId)) {
-      return erro(res, 403, "Este usuário não participa da conversa.");
+    if (!conversa.participantes.includes(eu.id)) {
+      return erro(res, 403, "Você não participa desta conversa.");
     }
     if (!texto) return erro(res, 400, "A mensagem não pode ser vazia.");
     if (texto.length > 1000) return erro(res, 400, "A mensagem pode ter no máximo 1000 caracteres.");
@@ -324,25 +539,25 @@ async function rotear(req, res) {
     const mensagem = {
       id: proximoId(db.mensagens),
       conversaId,
-      autorId,
+      // O autor vem da sessão: ninguém escreve no lugar de outra pessoa.
+      autorId: eu.id,
       texto,
       criadaEm: agora(),
-      lidaPor: [autorId], // quem escreveu já leu
+      lidaPor: [eu.id],
     };
     db.mensagens.push(mensagem);
     salvarBanco();
-    return responder(res, 201, { ...mensagem, autor: acharUsuario(autorId) });
+    return responder(res, 201, { ...mensagem, autor: publico(eu) });
   }
 
-  // DELETE /mensagens/:id?usuarioId=1
+  // DELETE /mensagens/:id
   const casaMensagem = caminho.match(/^\/mensagens\/(\d+)$/);
   if (metodo === "DELETE" && casaMensagem) {
     const id = Number(casaMensagem[1]);
     const indice = db.mensagens.findIndex((m) => m.id === id);
     if (indice === -1) return erro(res, 404, "Mensagem não encontrada.");
 
-    const usuarioId = Number(query.get("usuarioId"));
-    if (usuarioId && db.mensagens[indice].autorId !== usuarioId) {
+    if (db.mensagens[indice].autorId !== eu.id) {
       return erro(res, 403, "Você só pode apagar as suas próprias mensagens.");
     }
 
@@ -363,7 +578,7 @@ carregarBanco();
 const servidor = http.createServer((req, res) => {
   rotear(req, res).catch((e) => {
     console.error("Erro:", e.message);
-    erro(res, 500, e.message || "Erro interno do servidor");
+    erro(res, e.status || 500, e.message || "Erro interno do servidor");
   });
 });
 
@@ -382,5 +597,6 @@ servidor.listen(PORTA, "0.0.0.0", () => {
   console.log("\n  ZapZap API no ar 🚀");
   console.log(`  Local:  http://localhost:${PORTA}`);
   ipsDaRede().forEach((ip) => console.log(`  Rede:   http://${ip}:${PORTA}   <- use este no celular`));
-  console.log(`  Banco:  ${ARQUIVO_DB}\n`);
+  console.log(`  Banco:  ${ARQUIVO_DB}`);
+  console.log("  Contas de exemplo: ana / bruno / carla — senha 123456\n");
 });

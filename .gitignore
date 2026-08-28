@@ -1,0 +1,27 @@
+# Dependências
+node_modules/
+
+# Build / cache do Expo
+.expo/
+dist/
+web-build/
+.metro-health-check*
+
+# Banco de dados local do servidor (contém hashes de senha — não versionar)
+servidor/db.json
+servidor/db.json.*
+
+# Logs
+*.log
+npm-debug.*
+yarn-error.*
+
+# Sistema / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Ambiente
+.env
+.env.local

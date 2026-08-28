@@ -1,5 +1,5 @@
 /**
- * Camada de acesso à API (HTTP / JSON).
+ * Camada de acesso à API (HTTP / JSON) com autenticação por token.
  * Tudo que fala com o servidor mora aqui — as telas só chamam estas funções.
  */
 
@@ -43,15 +43,30 @@ export function setApiUrl(novaUrl) {
   return API_URL;
 }
 
+/* ------------------------- Token da sessão ------------------------- */
+
+// Guardado só em memória: fechou o app, precisa entrar de novo.
+let TOKEN = null;
+
+export function getToken() {
+  return TOKEN;
+}
+
+export function setToken(token) {
+  TOKEN = token || null;
+}
+
 /** Marca os erros criados por nós, para diferenciar de falhas de rede. */
-function marcar(erro) {
+function marcar(erro, status) {
   erro.daApi = true;
+  erro.status = status;
   return erro;
 }
 
 /**
- * Wrapper do fetch com timeout, cabeçalhos JSON e erros legíveis.
- * Códigos 2xx = sucesso; 4xx = erro do cliente; 5xx = erro do servidor.
+ * Wrapper do fetch com timeout, cabeçalhos JSON, token e erros legíveis.
+ * Códigos 2xx = sucesso; 401 = não autenticado; 4xx = erro do cliente;
+ * 5xx = erro do servidor.
  */
 async function requisicao(caminho, opcoes = {}, tempoLimite = 10000) {
   const url = `${API_URL}${caminho}`;
@@ -64,7 +79,12 @@ async function requisicao(caminho, opcoes = {}, tempoLimite = 10000) {
     const res = await fetch(url, {
       ...opcoes,
       signal: controle.signal,
-      headers: { "Content-Type": "application/json", ...(opcoes.headers || {}) },
+      headers: {
+        "Content-Type": "application/json",
+        // O token vai em todas as chamadas depois do login.
+        ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
+        ...(opcoes.headers || {}),
+      },
     });
 
     const texto = await res.text();
@@ -73,12 +93,14 @@ async function requisicao(caminho, opcoes = {}, tempoLimite = 10000) {
     try {
       dados = texto ? JSON.parse(texto) : null;
     } catch (e) {
-      throw marcar(new Error(`Resposta inválida (não é JSON) de ${url}`));
+      throw marcar(new Error(`Resposta inválida (não é JSON) de ${url}`), res.status);
     }
 
     if (!res.ok) {
       const detalhe = dados?.erro || texto || "sem detalhes";
-      throw marcar(new Error(`${metodo} ${caminho} falhou (${res.status}): ${detalhe}`));
+      // 401: o app trata mostrando a tela de login de novo.
+      if (res.status === 401) throw marcar(new Error(detalhe), 401);
+      throw marcar(new Error(`${metodo} ${caminho} falhou (${res.status}): ${detalhe}`), res.status);
     }
     return dados;
   } catch (e) {
@@ -98,29 +120,61 @@ async function requisicao(caminho, opcoes = {}, tempoLimite = 10000) {
 
 const json = (corpo) => JSON.stringify(corpo);
 
-/* -------------------------- Endpoints -------------------------- */
+/* -------------------------- Autenticação -------------------------- */
 
 export const verificarServidor = () => requisicao("/health", {}, 5000);
 
+/** POST /login — guarda o token e devolve o usuário. */
+export async function entrar(usuario, senha) {
+  const resposta = await requisicao("/login", {
+    method: "POST",
+    body: json({ usuario, senha }),
+  });
+  setToken(resposta.token);
+  return resposta.usuario;
+}
+
+/** POST /usuarios — cria a conta e já entra logado. */
+export async function cadastrar(usuario, senha, nome) {
+  const resposta = await requisicao("/usuarios", {
+    method: "POST",
+    body: json({ usuario, senha, nome }),
+  });
+  setToken(resposta.token);
+  return resposta.usuario;
+}
+
+/** POST /logout — invalida o token no servidor e esquece localmente. */
+export async function sair() {
+  try {
+    if (TOKEN) await requisicao("/logout", { method: "POST" });
+  } finally {
+    setToken(null);
+  }
+}
+
+export const meusDados = () => requisicao("/eu");
+
+/* -------------------------- Demais rotas -------------------------- */
+
 export const listarUsuarios = () => requisicao("/usuarios");
 
-export const criarUsuario = (nome) =>
-  requisicao("/usuarios", { method: "POST", body: json({ nome }) });
+/** Troca o nome exibido: atualizarUsuario(1, { nome: "Ana Paula" }) */
+export const atualizarUsuario = (id, campos) =>
+  requisicao(`/usuarios/${id}`, { method: "PUT", body: json(campos) });
 
-export const listarConversas = (usuarioId) =>
-  requisicao(`/conversas?usuarioId=${usuarioId}`);
+export const listarConversas = () => requisicao("/conversas");
 
 export const criarConversa = (participantes, titulo = null) =>
   requisicao("/conversas", { method: "POST", body: json({ participantes, titulo }) });
 
-export const marcarConversaComoLida = (conversaId, usuarioId) =>
-  requisicao(`/conversas/${conversaId}/lida`, { method: "POST", body: json({ usuarioId }) });
+export const marcarConversaComoLida = (conversaId) =>
+  requisicao(`/conversas/${conversaId}/lida`, { method: "POST" });
 
 export const listarMensagens = (conversaId, depoisDe = 0) =>
   requisicao(`/mensagens?conversaId=${conversaId}&depoisDe=${depoisDe}`);
 
-export const enviarMensagem = (conversaId, autorId, texto) =>
-  requisicao("/mensagens", { method: "POST", body: json({ conversaId, autorId, texto }) });
+export const enviarMensagem = (conversaId, texto) =>
+  requisicao("/mensagens", { method: "POST", body: json({ conversaId, texto }) });
 
-export const apagarMensagem = (id, usuarioId) =>
-  requisicao(`/mensagens/${id}?usuarioId=${usuarioId}`, { method: "DELETE" });
+export const apagarMensagem = (id) => requisicao(`/mensagens/${id}`, { method: "DELETE" });
